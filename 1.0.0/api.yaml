@@ -1,44 +1,108 @@
-walkoff_version: 1.0.0
-app_version: 1.0.0
-name: outlook_graph_app_only
-description: Outlook (Microsoft Graph) – App-only (client credentials) mail reader
+name: Outlook Graph (AppOnly)
+description: Microsoft Graph (Outlook) with application (client_credentials) auth. Reads mailbox via /v1.0/users/{mailbox}.
+app_version: "1.0.0"
+categories:
+  - Communication
+  - Email
 contact_info:
-  name: SOAR
+  name: outlook-graph-app-only
+  url: https://graph.microsoft.com
   email: noreply@example.com
-license_info:
-  name: MIT
 
 actions:
   - name: list_inbox
-    description: List Inbox messages (Application permissions).
+    description: List Inbox messages (app-only)
     parameters:
-      - { name: tenant_id,     description: Entra tenant GUID, required: true,  type: string }
-      - { name: client_id,     description: App (client) ID,   required: true,  type: string }
-      - { name: client_secret, description: Client secret,      required: true,  type: string }
-      - { name: mailbox,       description: UPN (soar@mycompany.com), required: true, type: string }
-      - { name: top,           description: Max items (default 50), required: false, type: number }
-      - { name: orderby,       description:  (default "receivedDateTime desc"), required: false, type: string }
+      - name: tenant_id
+        description: Entra ID tenant (GUID)
+        required: true
+        schema:
+          type: string
+      - name: client_id
+        description: App (client) ID
+        required: true
+        schema:
+          type: string
+      - name: client_secret
+        description: Client secret
+        required: true
+        schema:
+          type: string
+      - name: mailbox
+        description: Target mailbox UPN (e.g. soar@mycompany.com)
+        required: true
+        schema:
+          type: string
+      - name: top
+        description: Page size
+        required: false
+        schema:
+          type: integer
+          default: 50
+      - name: orderby
+        description: OData orderby
+        required: false
+        schema:
+          type: string
+          default: "receivedDateTime desc"
+      - name: select
+        description: OData select
+        required: false
+        schema:
+          type: string
+          default: "subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink,id"
     returns:
-      - { name: result, description: JSON from Microsoft Graph, type: object }
+      description: Graph list response
+      example: '{"success": true, "data": {"value": []}}'
+      schema:
+        type: object
 
   - name: list_next_page
-    description: Follow @odata.nextLink to fetch the next page.
+    description: Follow @odata.nextLink to fetch next page
     parameters:
-      - { name: tenant_id,     required: true,  type: string }
-      - { name: client_id,     required: true,  type: string }
-      - { name: client_secret, required: true,  type: string }
-      - { name: next_link,     required: true,  type: string }
+      - name: tenant_id
+        required: true
+        schema: { type: string }
+      - name: client_id
+        required: true
+        schema: { type: string }
+      - name: client_secret
+        required: true
+        schema: { type: string }
+      - name: next_link
+        description: Value from @odata.nextLink
+        required: true
+        schema: { type: string }
     returns:
-      - { name: result, description: JSON from Microsoft Graph, type: object }
+      description: Next page response
+      example: '{"success": true, "data": {"value": []}}'
+      schema:
+        type: object
 
   - name: list_inbox_delta
-    description: Use delta to get initial snapshot or only changes.
+    description: Use /messages/delta to get changes
     parameters:
-      - { name: tenant_id,     required: true,  type: string }
-      - { name: client_id,     required: true,  type: string }
-      - { name: client_secret, required: true,  type: string }
-      - { name: mailbox,       required: true,  type: string }
-      - { name: delta_link,    required: false, type: string }
-      - { name: top,           required: false, type: number }
+      - name: tenant_id
+        required: true
+        schema: { type: string }
+      - name: client_id
+        required: true
+        schema: { type: string }
+      - name: client_secret
+        required: true
+        schema: { type: string }
+      - name: mailbox
+        required: true
+        schema: { type: string }
+      - name: delta_link
+        description: If provided, call this link directly
+        required: false
+        schema: { type: string }
+      - name: top
+        required: false
+        schema: { type: integer, default: 100 }
     returns:
-      - { name: result, description: JSON with @odata.deltaLink/@odata.nextLink, type: object }
+      description: Delta response (may return @odata.nextLink or @odata.deltaLink)
+      example: '{"success": true, "delta_link": null, "next_link": null}'
+      schema:
+        type: object
