@@ -1,0 +1,44 @@
+walkoff_version: 1.0.0
+app_version: 1.0.0
+name: outlook_graph_app_only
+description: Outlook (Microsoft Graph) – App-only (client credentials) mail reader
+contact_info:
+  name: SOAR
+  email: noreply@example.com
+license_info:
+  name: MIT
+
+actions:
+  - name: list_inbox
+    description: List Inbox messages (Application permissions).
+    parameters:
+      - { name: tenant_id,     description: Entra tenant GUID, required: true,  type: string }
+      - { name: client_id,     description: App (client) ID,   required: true,  type: string }
+      - { name: client_secret, description: Client secret,      required: true,  type: string }
+      - { name: mailbox,       description: UPN (soar@mycompany.com), required: true, type: string }
+      - { name: top,           description: Max items (default 50), required: false, type: number }
+      - { name: orderby,       description:  (default "receivedDateTime desc"), required: false, type: string }
+    returns:
+      - { name: result, description: JSON from Microsoft Graph, type: object }
+
+  - name: list_next_page
+    description: Follow @odata.nextLink to fetch the next page.
+    parameters:
+      - { name: tenant_id,     required: true,  type: string }
+      - { name: client_id,     required: true,  type: string }
+      - { name: client_secret, required: true,  type: string }
+      - { name: next_link,     required: true,  type: string }
+    returns:
+      - { name: result, description: JSON from Microsoft Graph, type: object }
+
+  - name: list_inbox_delta
+    description: Use delta to get initial snapshot or only changes.
+    parameters:
+      - { name: tenant_id,     required: true,  type: string }
+      - { name: client_id,     required: true,  type: string }
+      - { name: client_secret, required: true,  type: string }
+      - { name: mailbox,       required: true,  type: string }
+      - { name: delta_link,    required: false, type: string }
+      - { name: top,           required: false, type: number }
+    returns:
+      - { name: result, description: JSON with @odata.deltaLink/@odata.nextLink, type: object }
