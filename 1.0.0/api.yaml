@@ -1,7 +1,7 @@
 walkoff_version: 1.0.0
 app_version: 1.0.0
 name: outlook_graph_app_only
-description: Outlook (Microsoft Graph) – App-only (client credentials) mail reader
+description: Outlook (Microsoft Graph) â€“ App-only (client credentials) mail reader
 contact_info:
   name: SOAR
   email: noreply@example.com
