@@ -1,37 +1,18 @@
-import time
+import json
 import requests
-from typing import Optional, Dict, Any
+from typing import Dict, Any, Optional
 from walkoff_app_sdk.app_base import AppBase
 
-_TOKEN_CACHE = {"token": None, "exp": 0}
+GRAPH = "https://graph.microsoft.com/v1.0"
 
 class OutlookGraphAppOnly(AppBase):
     __version__ = "1.0.0"
     app_name = "Outlook Graph (AppOnly)"
 
-    def _get_token(self, tenant_id: str, client_id: str, client_secret: str) -> str:
-        now = int(time.time())
-        if _TOKEN_CACHE["token"] and _TOKEN_CACHE["exp"] - 60 > now:
-            return _TOKEN_CACHE["token"]
-        url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "scope": "https://graph.microsoft.com/.default",
-        }
-        headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
-        resp = requests.post(url, data=data, headers=headers, timeout=30)
-        resp.raise_for_status()
-        j = resp.json()
-        token = j.get("access_token")
-        expires_in = int(j.get("expires_in", 3000))
-        if not token:
-            raise RuntimeError(f"Token JSON missing access_token: {j}")
-        _TOKEN_CACHE["token"] = token
-        _TOKEN_CACHE["exp"] = now + expires_in
-        return token
+    def __init__(self, redis, logger, console_logger=None):
+        super().__init__(redis, logger, console_logger)
 
+    # ===== Helpers =====
     def _auth_headers(self, token: str) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {token}",
@@ -39,6 +20,19 @@ class OutlookGraphAppOnly(AppBase):
             'Prefer': 'outlook.body-content-type="text"',
         }
 
+    def _get_token(self, tenant_id: str, client_id: str, client_secret: str) -> str:
+        url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        data = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+            "scope": "https://graph.microsoft.com/.default",
+        }
+        resp = requests.post(url, data=data, timeout=30)
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+    # ===== Actions (api.yaml ile eşleşir) =====
     def list_inbox(
         self,
         tenant_id: str,
@@ -49,15 +43,18 @@ class OutlookGraphAppOnly(AppBase):
         orderby: str = "receivedDateTime desc",
         select: str = "subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink,id",
     ) -> Dict[str, Any]:
+        """/users/{mailbox}/mailFolders/Inbox/messages"""
         token = self._get_token(tenant_id, client_id, client_secret)
-        url = f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/Inbox/messages"
-        params = {"": top, "": orderby}
-        if select:
-            params[""] = select
+        url = f"{GRAPH}/users/{mailbox}/mailFolders/Inbox/messages"
+        params: Dict[str, Any] = {}
+        if top: params[""] = int(top)
+        if orderby: params[""] = orderby
+        if select: params[""] = select
+
         resp = requests.get(url, headers=self._auth_headers(token), params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        return {"success": True, "data": data, "next_link": data.get("@odata.nextLink")}
+        return {"success": True, "data": data.get("value", []), "next_link": data.get("@odata.nextLink")}
 
     def list_next_page(
         self,
@@ -72,7 +69,7 @@ class OutlookGraphAppOnly(AppBase):
         resp = requests.get(next_link, headers=self._auth_headers(token), timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        return {"success": True, "data": data, "next_link": data.get("@odata.nextLink")}
+        return {"success": True, "data": data.get("value", []), "next_link": data.get("@odata.nextLink")}
 
     def list_inbox_delta(
         self,
@@ -83,22 +80,25 @@ class OutlookGraphAppOnly(AppBase):
         delta_link: Optional[str] = None,
         top: int = 100,
     ) -> Dict[str, Any]:
+        """/users/{mailbox}/mailFolders/Inbox/messages/delta"""
         token = self._get_token(tenant_id, client_id, client_secret)
         if delta_link:
             url = delta_link
             params = None
         else:
-            url = f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/Inbox/messages/delta"
-            params = {"": top}
+            url = f"{GRAPH}/users/{mailbox}/mailFolders/Inbox/messages/delta"
+            params = {"": int(top)}
+
         resp = requests.get(url, headers=self._auth_headers(token), params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
         return {
             "success": True,
-            "data": data,
+            "data": data.get("value", []),
             "delta_link": data.get("@odata.deltaLink"),
             "next_link": data.get("@odata.nextLink"),
         }
 
 if __name__ == "__main__":
-    OutlookGraphAppOnly.run()
+    app = OutlookGraphAppOnly()
+    app.run()
