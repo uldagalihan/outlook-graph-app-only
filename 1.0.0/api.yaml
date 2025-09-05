@@ -1,108 +1,123 @@
 name: Outlook Graph (AppOnly)
-description: Microsoft Graph (Outlook) with application (client_credentials) auth. Reads mailbox via /v1.0/users/{mailbox}.
-app_version: "1.0.0"
+description: Microsoft Graph (Application / client_credentials) - Inbox read
+version: "1.0.0"
+contact_info:
+  name: "uldagalihan"
+  url: "https://github.com/uldagalihan/outlook-graph-app-only"
+  email: "example@example.com"
 categories:
   - Communication
   - Email
-contact_info:
-  name: outlook-graph-app-only
-  url: https://graph.microsoft.com
-  email: noreply@example.com
+authentication: []  # UI'da "Manually Authenticate" butonunu kaldırır
 
 actions:
   - name: list_inbox
-    description: List Inbox messages (app-only)
+    label: List Inbox (app-only)
+    description: List messages in Inbox of a mailbox using application permissions
     parameters:
       - name: tenant_id
-        description: Entra ID tenant (GUID)
+        description: "Entra tenant ID (GUID)"
+        example: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         required: true
-        schema:
-          type: string
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
       - name: client_id
-        description: App (client) ID
+        description: "App (client) ID"
+        example: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         required: true
-        schema:
-          type: string
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
       - name: client_secret
-        description: Client secret
+        description: "Client secret"
+        example: "******"
         required: true
-        schema:
-          type: string
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
       - name: mailbox
-        description: Target mailbox UPN (e.g. soar@mycompany.com)
+        description: "Target mailbox UPN (e.g. soar@mycompany.com)"
+        example: "soar@mycompany.com"
         required: true
-        schema:
-          type: string
+        schema: { type: string }
       - name: top
-        description: Page size
+        description: "$top (1-1000)"
+        example: 50
         required: false
-        schema:
-          type: integer
-          default: 50
+        schema: { type: integer }
       - name: orderby
-        description: OData orderby
+        description: "$orderby"
+        example: "receivedDateTime desc"
         required: false
-        schema:
-          type: string
-          default: "receivedDateTime desc"
+        schema: { type: string }
       - name: select
-        description: OData select
+        description: "$select"
+        example: "subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink,id"
         required: false
-        schema:
-          type: string
-          default: "subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink,id"
+        schema: { type: string }
     returns:
-      description: Graph list response
-      example: '{"success": true, "data": {"value": []}}'
-      schema:
-        type: object
+      description: "Graph response"
+      example: '{"success": true, "data": [], "next_link": null}'
+      schema: { type: object }
 
   - name: list_next_page
-    description: Follow @odata.nextLink to fetch next page
+    label: List next page
+    description: Continue with @odata.nextLink
     parameters:
       - name: tenant_id
         required: true
+        variant: STATIC_VALUE
+        configuration: true
         schema: { type: string }
       - name: client_id
         required: true
+        variant: STATIC_VALUE
+        configuration: true
         schema: { type: string }
       - name: client_secret
         required: true
+        variant: STATIC_VALUE
+        configuration: true
         schema: { type: string }
       - name: next_link
-        description: Value from @odata.nextLink
+        description: "@odata.nextLink from previous result"
         required: true
         schema: { type: string }
     returns:
-      description: Next page response
-      example: '{"success": true, "data": {"value": []}}'
-      schema:
-        type: object
+      description: "Graph response"
+      example: '{"success": true, "data": [], "next_link": null}'
+      schema: { type: object }
 
   - name: list_inbox_delta
-    description: Use /messages/delta to get changes
+    label: Delta sync Inbox
+    description: Use delta query for Inbox
     parameters:
       - name: tenant_id
         required: true
+        variant: STATIC_VALUE
+        configuration: true
         schema: { type: string }
       - name: client_id
         required: true
+        variant: STATIC_VALUE
+        configuration: true
         schema: { type: string }
       - name: client_secret
         required: true
+        variant: STATIC_VALUE
+        configuration: true
         schema: { type: string }
       - name: mailbox
         required: true
         schema: { type: string }
       - name: delta_link
-        description: If provided, call this link directly
         required: false
         schema: { type: string }
       - name: top
         required: false
-        schema: { type: integer, default: 100 }
+        schema: { type: integer }
     returns:
-      description: Delta response (may return @odata.nextLink or @odata.deltaLink)
-      example: '{"success": true, "delta_link": null, "next_link": null}'
-      schema:
-        type: object
+      description: "Graph delta response"
+      example: '{"success": true, "data": [], "delta_link": null, "next_link": null}'
+      schema: { type: object }
