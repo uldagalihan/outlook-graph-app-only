@@ -5,10 +5,11 @@ RUN apk --no-cache add --update alpine-sdk libffi libffi-dev musl-dev openssl-de
 RUN mkdir /install
 WORKDIR /install
 COPY requirements.txt /requirements.txt
-RUN pip install --prefix="/install" -r /requirements.txt
+RUN python -m pip install --upgrade pip && pip install --no-cache-dir --prefix="/install" -r /requirements.txt
 
 FROM base
 COPY --from=builder /install /usr/local
 COPY src /app
 WORKDIR /app
 CMD python app.py --log-level DEBUG
+
