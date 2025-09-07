@@ -1,0 +1,98 @@
+name: Outlook Graph AppOnly
+description: Microsoft Graph (Application credentials) - Read Inbox
+app_version: "1.0.2"
+contact_info:
+  name: "uldagalihan"
+  url: "https://github.com/uldagalihan/outlook-graph-app-only"
+  email: "example@example.com"
+categories:
+  - Communication
+  - Email
+authentication: {}
+actions:
+  - name: list_inbox
+    label: List Inbox (app-only)
+    description: List messages in Inbox of a mailbox using application permissions
+    parameters:
+      - name: tenant_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_secret
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: mailbox
+        required: true
+        schema: { type: string }
+      - name: top
+        description: "Page size (1-1000)"
+        required: false
+        schema: { type: integer }
+    returns:
+      schema: { type: object }
+
+  - name: list_next_page
+    label: List next page
+    description: Continue with @odata.nextLink
+    parameters:
+      - name: tenant_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_secret
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: next_link
+        description: "@odata.nextLink from previous result"
+        required: true
+        schema: { type: string }
+    returns:
+      schema: { type: object }
+
+  - name: list_inbox_delta
+    label: Delta sync Inbox
+    description: Use delta query for Inbox
+    parameters:
+      - name: tenant_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_secret
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: mailbox
+        required: true
+        schema: { type: string }
+      - name: delta_link
+        description: "Pass either @odata.nextLink OR @odata.deltaLink"
+        required: false
+        schema: { type: string }
+      - name: top
+        required: false
+        schema: { type: integer }
+    returns:
+      schema: { type: object }
