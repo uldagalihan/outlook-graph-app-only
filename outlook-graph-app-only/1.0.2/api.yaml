@@ -1,5 +1,5 @@
 ﻿name: Outlook Graph AppOnly
-description: Microsoft Graph (Application credentials) - Read Inbox
+description: Microsoft Graph (Application credentials) - Read all messages for a mailbox
 app_version: "1.1.0"
 contact_info:
   name: "uldagalihan"
@@ -10,9 +10,9 @@ categories:
   - Email
 authentication: {}
 actions:
-  - name: list_inbox
-    label: List Inbox (app-only)
-    description: List messages in Inbox of a mailbox using application permissions
+  - name: list_messages
+    label: List messages (app-only)
+    description: List messages from /users/{mailbox}/messages using application permissions
     parameters:
       - name: tenant_id
         required: true
@@ -33,170 +33,8 @@ actions:
         required: true
         schema: { type: string }
       - name: top
-        description: "Page size (1-1000)"
+        description: "Page size (1-1000). If omitted, Graph default is used."
         required: false
         schema: { type: integer }
     returns:
       schema: { type: object }
-
-  - name: list_next_page
-    label: List next page
-    description: Continue with @odata.nextLink
-    parameters:
-      - name: tenant_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_secret
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: next_link
-        description: "@odata.nextLink from previous result"
-        required: true
-        schema: { type: string }
-    returns:
-      schema: { type: object }
-
-  - name: list_inbox_delta
-    label: Delta sync Inbox
-    description: Use delta query for Inbox
-    parameters:
-      - name: tenant_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_secret
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: mailbox
-        required: true
-        schema: { type: string }
-      - name: delta_link
-        description: "Pass either @odata.nextLink OR @odata.deltaLink"
-        required: false
-        schema: { type: string }
-      - name: top
-        required: false
-        schema: { type: integer }
-    returns:
-      schema: { type: object }
-
-  - name: list_unread_by_subject_inbox
-    label: List unread by subject (Inbox)
-    description: List unread messages in Inbox filtered by subject () and optionally mark them as read
-    parameters:
-      - name: tenant_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_secret
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: mailbox
-        required: true
-        schema: { type: string }
-      - name: subject_query
-        description: 'Subject query for , e.g. "\"[Kurum Dışı] Şirkete Yeni Katılım - New Comer\""'
-        required: true
-        schema: { type: string }
-      - name: top
-        required: false
-        schema: { type: integer }
-      - name: mark_read
-        description: "If true, mark returned messages as read"
-        required: false
-        schema: { type: boolean }
-    returns:
-      schema: { type: object }
-
-  - name: list_unread_new_hire
-    label: List unread new hire (Inbox)
-    description: List unread 'Şirkete Yeni Katılım - New Comer' messages from Inbox and optionally mark them as read
-    parameters:
-      - name: tenant_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_secret
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: mailbox
-        required: true
-        schema: { type: string }
-      - name: top
-        required: false
-        schema: { type: integer }
-      - name: mark_read
-        required: false
-        schema: { type: boolean }
-    returns:
-      schema: { type: object }
-
-  - name: list_unread_termination
-    label: List unread termination (Inbox)
-    description: List unread 'Çalışan İlişik Kesme Bildirimi' messages from Inbox and optionally mark them as read
-    parameters:
-      - name: tenant_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_id
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: client_secret
-        required: true
-        variant: STATIC_VALUE
-        configuration: true
-        schema: { type: string }
-      - name: mailbox
-        required: true
-        schema: { type: string }
-      - name: top
-        required: false
-        schema: { type: integer }
-      - name: mark_read
-        required: false
-        schema: { type: boolean }
-    returns:
-      schema: { type: object }
-
-# Notes:
-# - Graph App Perms:
-#   * Read-only: Mail.Read (or Mail.ReadBasic.All)
-#   * To mark as read: Mail.ReadWrite
-# - Unread actions rely on  + isRead=false
