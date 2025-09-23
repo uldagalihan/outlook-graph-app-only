@@ -25,11 +25,15 @@ class OutlookGraphAppOnly(AppBase):
 
     def _get(self, url, tok, params=None):
         headers = {"Authorization": f"Bearer {tok}"}
+
+        # Log: hazırlanan (encode edilmiş) URL'yi ve params'ı yaz
         if self.logger:
             try:
-                self.logger.info(f"[Graph GET] url={url} params={json.dumps(params, ensure_ascii=False)}")
+                prepped = requests.Request("GET", url, params=params).prepare()
+                self.logger.info(f"[Graph GET] url={prepped.url} params={json.dumps(params, ensure_ascii=False)}")
             except Exception:
                 pass
+
         r = requests.get(url, headers=headers, params=params, timeout=30)
         r.raise_for_status()
         return r.json()
@@ -38,17 +42,24 @@ class OutlookGraphAppOnly(AppBase):
         tok = self._token(tenant_id, client_id, client_secret)
         url = f"{GRAPH}/users/{mailbox}/messages"
 
+        # OData'da tek tırnak kaçışı: '' (iki tek tırnak)
         safe_subject = subject.replace("'", "''")
-        # =receivedDateTime desc -> Graph kuralı:  içinde ÖNCE görünmeli
+
+        # $orderby=receivedDateTime desc kullanıyorsak,
+        # Graph kuralına göre receivedDateTime $filter içinde de (ve önce) yer almalı
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
 
         params = {
-            "": "id,sender,subject,receivedDateTime",
-            "": filter_expr,
-            "": "receivedDateTime desc",
+            "$select": "id,sender,subject,receivedDateTime",
+            "$filter": filter_expr,
+            "$orderby": "receivedDateTime desc",
         }
-        if top:
-            params[""] = int(top)
+        if top is not None:
+            try:
+                t = max(1, min(1000, int(top)))
+            except Exception:
+                t = 10
+            params["$top"] = t
 
         data = self._get(url, tok, params=params)
         return {
