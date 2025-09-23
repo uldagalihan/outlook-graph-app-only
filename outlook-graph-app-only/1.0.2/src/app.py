@@ -23,10 +23,11 @@ class OutlookGraphAppOnly(AppBase):
         r.raise_for_status()
         return r.json()["access_token"]
 
-    def _get(self, url, tok, params=None):
+    def _get(self, url, tok, params=None, prefer_text_body=True):
         headers = {"Authorization": f"Bearer {tok}"}
+        if prefer_text_body:
+            headers["Prefer"] = 'outlook.body-content-type="text"'
 
-        # Log: hazırlanan (encode edilmiş) URL'yi ve params'ı yaz
         if self.logger:
             try:
                 prepped = requests.Request("GET", url, params=params).prepare()
@@ -42,15 +43,11 @@ class OutlookGraphAppOnly(AppBase):
         tok = self._token(tenant_id, client_id, client_secret)
         url = f"{GRAPH}/users/{mailbox}/messages"
 
-        # OData'da tek tırnak kaçışı: '' (iki tek tırnak)
         safe_subject = subject.replace("'", "''")
-
-        # $orderby=receivedDateTime desc kullanıyorsak,
-        # Graph kuralına göre receivedDateTime $filter içinde de (ve önce) yer almalı
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
 
         params = {
-            "$select": "id,sender,subject,receivedDateTime",
+            "$select": "id,sender,subject,receivedDateTime,body,uniqueBody,bodyPreview",
             "$filter": filter_expr,
             "$orderby": "receivedDateTime desc",
         }
@@ -61,19 +58,17 @@ class OutlookGraphAppOnly(AppBase):
                 t = 10
             params["$top"] = t
 
-        data = self._get(url, tok, params=params)
+        data = self._get(url, tok, params=params, prefer_text_body=True)
         return {
             "success": True,
             "data": data.get("value", []),
             "next_link": data.get("@odata.nextLink"),
         }
 
-    # ACTION 1: İşe giriş mailleri
     def list_new_hire_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
         subject = "[Kurum Dışı] Şirkete Yeni Katılım - New Comer"
         return self._list_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
 
-    # ACTION 2: İşten çıkış mailleri
     def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
         subject = "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi"
         return self._list_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
