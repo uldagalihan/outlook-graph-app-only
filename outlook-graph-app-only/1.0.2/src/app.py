@@ -48,10 +48,10 @@ class OutlookGraphAppOnly(AppBase):
         tok = self._token(tenant_id, client_id, client_secret)
         url = f"{GRAPH}/users/{mailbox}/messages"
 
-        # OData'da tek tırnak kaçışı: '' (iki tek tırnak)
+        # OData tek tırnak kaçışı: '' (iki tek tırnak)
         safe_subject = subject.replace("'", "''")
 
-        # $orderby=receivedDateTime desc kullanırken Graph kuralı gereği $filter içinde önce geçmeli
+        # $orderby=receivedDateTime desc -> Graph kuralı gereği $filter içinde önce olmalı
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
 
         params = {
@@ -77,28 +77,15 @@ class OutlookGraphAppOnly(AppBase):
             ub = item.get("uniqueBody") or {}
             b  = item.get("body") or {}
             body = (ub.get("content") or b.get("content") or item.get("bodyPreview") or "")
-        # Normalize boşluklar
-        body = re.sub(r"\s+", " ", body).strip()
-        return body
+        return re.sub(r"\s+", " ", body).strip()
 
-    # === İsim temizle (trim, birden fazla boşluk -> tek boşluk) ===
+    # === İsim temizle ===
     @staticmethod
     def _clean_name(name):
         if not name:
             return ""
         name = re.sub(r"\s+", " ", name)
         return name.strip(" \t\r\n-–—.")
-
-    # === Regex: New hire -> "CEP TELEFONU <numara> <İSİM> İş ..." ===
-    @staticmethod
-    def _extract_name_new_hire(text):
-        # CEP TELEFONU [::<-] sayı sonra isim, 'İş' kelimesine kadar.
-        pat = re.compile(
-            r"CEP\s*TELEFONU\s*[:\-]?\s*\d+\s+(?P<name>.+?)\s+İş\b",
-            flags=re.IGNORECASE | re.DOTALL
-        )
-        m = pat.search(text)
-        return OutlookGraphAppOnly._clean_name(m.group("name")) if m else ""
 
     # === Regex: Termination -> "... sicili ile çalışan <İSİM> için ..." ===
     @staticmethod
@@ -110,25 +97,17 @@ class OutlookGraphAppOnly(AppBase):
         m = pat.search(text)
         return OutlookGraphAppOnly._clean_name(m.group("name")) if m else ""
 
-    # === ACTION 1: Sadece isimleri döndür (Yeni Katılım) ===
+    # === ACTION 1: New Hire -> FULL RAW MESSAGES (inceleme için) ===
     def list_new_hire_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
         subject = "[Kurum Dışı] Şirkete Yeni Katılım - New Comer"
         items = self._fetch_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
-        names = []
-        for it in items:
-            body = self._get_body_text(it)
-            name = self._extract_name_new_hire(body)
-            if name:
-                names.append(name)
-                if self.logger:
-                    self.logger.info(f"[NEW_HIRE] matched name: {name}")
-            else:
-                if self.logger:
-                    self.logger.info("[NEW_HIRE] no match in body")
-        # Sadece isimler
-        return {"success": True, "names": names}
+        # İnceleme kolaylığı için body/uniqueBody/preview zaten $select ile dahil.
+        # Bu aksiyon regex YAPMAZ; ham veriyi geri döner.
+        if self.logger:
+            self.logger.info(f"[NEW_HIRE] returning raw messages for inspection. count={len(items)}")
+        return {"success": True, "count": len(items), "data": items}
 
-    # === ACTION 2: Sadece isimleri döndür (İlişik Kesme) ===
+    # === ACTION 2: Termination -> SADECE İSİMLER (regex) ===
     def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
         subject = "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi"
         items = self._fetch_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
@@ -143,7 +122,6 @@ class OutlookGraphAppOnly(AppBase):
             else:
                 if self.logger:
                     self.logger.info("[TERMINATION] no match in body")
-        # Sadece isimler
         return {"success": True, "names": names}
 
 if __name__ == "__main__":
