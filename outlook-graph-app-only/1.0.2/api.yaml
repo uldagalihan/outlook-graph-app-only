@@ -1,5 +1,5 @@
 ﻿name: Outlook Graph AppOnly
-description: Microsoft Graph (Application credentials) - HR filtered messages
+description: Microsoft Graph (Application credentials) - HR filtered messages (returns names)
 app_version: "1.0.2"
 contact_info:
   name: "uldagalihan"
@@ -11,8 +11,8 @@ categories:
 authentication: {}
 actions:
   - name: list_new_hire_messages
-    label: List New Hire messages
-    description: List messages where subject equals "[Kurum Dışı] Şirkete Yeni Katılım - New Comer", ordered by receivedDateTime desc
+    label: Extract names from New Hire emails
+    description: Get messages where subject equals "[Kurum Dışı] Şirkete Yeni Katılım - New Comer" and return extracted full names from body
     parameters:
       - name: tenant_id
         required: true
@@ -33,15 +33,15 @@ actions:
         required: true
         schema: { type: string }
       - name: top
-        description: "How many messages to return (page size 1-1000)"
+        description: "How many messages to inspect (page size 1-1000)"
         required: false
         schema: { type: integer }
     returns:
       schema: { type: object }
 
   - name: list_termination_messages
-    label: List Termination messages
-    description: List messages where subject equals "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi", ordered by receivedDateTime desc
+    label: Extract names from Termination emails
+    description: Get messages where subject equals "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi" and return extracted full names from body
     parameters:
       - name: tenant_id
         required: true
@@ -62,7 +62,7 @@ actions:
         required: true
         schema: { type: string }
       - name: top
-        description: "How many messages to return (page size 1-1000)"
+        description: "How many messages to inspect (page size 1-1000)"
         required: false
         schema: { type: integer }
     returns:
