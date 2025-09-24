@@ -31,7 +31,6 @@ class OutlookGraphAppOnly(AppBase):
         if prefer_text_body:
             headers["Prefer"] = 'outlook.body-content-type="text"'
 
-        # Log: encode edilmiş tam URL + params
         if self.logger:
             try:
                 prepped = requests.Request("GET", url, params=params).prepare()
@@ -47,13 +46,9 @@ class OutlookGraphAppOnly(AppBase):
     def _fetch_by_exact_subject(self, tenant_id, client_id, client_secret, mailbox, subject, top=None):
         tok = self._token(tenant_id, client_id, client_secret)
         url = f"{GRAPH}/users/{mailbox}/messages"
-
-        # OData tek tırnak kaçışı: '' (iki tek tırnak)
         safe_subject = subject.replace("'", "''")
-
-        # $orderby=receivedDateTime desc -> Graph kuralı gereği $filter içinde önce olmalı
+        # $orderby alanı $filter içinde de (ve önce) geçmeli kuralına uyar
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
-
         params = {
             "$select": "id,sender,subject,receivedDateTime,body,uniqueBody,bodyPreview",
             "$filter": filter_expr,
@@ -65,7 +60,6 @@ class OutlookGraphAppOnly(AppBase):
             except Exception:
                 t = 10
             params["$top"] = t
-
         data = self._get(url, tok, params=params, prefer_text_body=True)
         return data.get("value", [])
 
@@ -77,7 +71,6 @@ class OutlookGraphAppOnly(AppBase):
             ub = item.get("uniqueBody") or {}
             b  = item.get("body") or {}
             body = (ub.get("content") or b.get("content") or item.get("bodyPreview") or "")
-        # Satırları koruyup boşlukları sadeleştir
         body = body.replace("\r\n", "\n").replace("\r", "\n")
         body = re.sub(r"[ \t]+", " ", body)
         body = re.sub(r"\n{2,}", "\n", body)
@@ -91,75 +84,75 @@ class OutlookGraphAppOnly(AppBase):
         name = re.sub(r"\s+", " ", name)
         return name.strip(" \t\r\n-–—.")
 
-    # === NEW HIRE: Akıllı ayrıştırıcı (pozisyonu yeme!)
+    # === Yardımcılar: token sınıfları ===
+    @staticmethod
+    def _is_all_caps_word(tok: str) -> bool:
+        # Türkçe uyumlu ALL-CAPS: sadece harflerden oluşsun ve en az 2 harf olsun
+        letters = re.sub(r"[^A-Za-zÇĞİÖŞÜçğıöşü]", "", tok)
+        return len(letters) >= 2 and letters == letters.upper()
+
+    @staticmethod
+    def _is_title_like(tok: str) -> bool:
+        # TitleCase/MixedCase isim: İlk harf büyük, devamı küçük/karmışık (oğlu- gibi tire destekli)
+        return bool(re.match(r"^[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+$", tok))
+
+    # === NEW HIRE: Ad Soyad = (sicil no'dan sonra) ilk ALL-CAPS gelene kadarki 2–6 token ===
     @staticmethod
     def _extract_name_new_hire(text):
-        # 1) CEP TELEFONU ... <sicil>  sonrası metni yakala (yoksa SİCİL NO ile dene)
+        # 1) CEP TELEFONU ... <sicil> sonrası metni al; yoksa SİCİL NO ile dene
         m = re.search(r"CEP\s*TELEFONU\b.*?\b(\d{3,})\b(?P<rest>.*)", text, flags=re.IGNORECASE | re.DOTALL)
         if not m:
             m = re.search(r"S[İI]C[İI]L\s*NO\b.*?\b(\d{3,})\b(?P<rest>.*)", text, flags=re.IGNORECASE | re.DOTALL)
         rest = m.group("rest") if m else text
 
-        # 2) Tokenize (Türkçe harfler ve isim bağlaçları destekli)
+        # 2) Tokenize (TR harfler dahil)
         tokens = re.findall(r"[A-Za-zÇĞİÖŞÜçğıöşü'’\-]+", rest)
 
-        # İsimde kullanılabilecek bağlaç/küçük kelimeler
-        connectors = {"de","da","van","von","bin","ibn","al","el","oğlu","oglu","del","di","di","di’"}
-        # Pozisyon ve diğer kolon/ayraç stopword’leri
-        stops = {
-            # pozisyon & unvan
-            "stajyer","staj","uzman","kıdemli","kidemli","mühendis","muhendis","müdür","mudur","yönetici","yonetici",
-            "uzmanı","uzmani","analist","koordinatör","koordinator","danışman","danisman","asistan","sorumlu",
-            "lider","lead","direktör","direktor","director","manager","yöneticisi","yoneticisi","developer","geliştirici",
-            "devops","architect","mimar","engineer","officer","specialist","product","process","security","siber","güvenlik",
-            # diğer kolonlar
-            "pozisyon","masraf","yeri","bağlı","bagli","olduğu","oldugu","ilk","yönetici","yonetici","işyeri","isyeri",
-            "lokasyon","yaka","tipi","işe","ise","başlama","baslama","tarihi","mail","grubu","cep","telefonu"
-        }
-
+        connectors = {"de","da","van","von","bin","ibn","al","el","oğlu","oglu","del","di"}
         name_tokens = []
-        started = False
-
-        def is_name_token(tok: str) -> bool:
-            # Büyük harfle başlayan Türkçe isim parçaları veya TAM büyük (kısaltma)
-            return bool(re.match(r"^[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+$", tok)) or bool(re.match(r"^[A-ZÇĞİÖŞÜ]{2,}$", tok))
 
         for tok in tokens:
             low = tok.lower()
 
-            # Durma koşulları: pozisyon/stops veya diğer kolonlar gelirse isim bitti
-            if low in stops:
+            # POZİSYON kolonu ALL-CAPS olduğundan: ilk ALL-CAPS kelimede kes
+            if OutlookGraphAppOnly._is_all_caps_word(tok):
                 break
 
-            if is_name_token(tok) or low in connectors:
+            # İsim kuralları: TitleCase veya bağlaç
+            if OutlookGraphAppOnly._is_title_like(tok) or low in connectors:
                 name_tokens.append(tok)
-                started = True
-                # 2–6 token arası makul bir ad-soyad (çok uzarsa kesiyoruz)
-                if len(name_tokens) >= 6:
+                if len(name_tokens) >= 6:  # çok uzamasın
                     break
                 continue
 
-            # isim başladıktan sonra isme uymayan bir token gelirse dur
-            if started:
+            # İsim başladıysa ve bu token isim formatına uymuyorsa kes
+            if name_tokens:
                 break
-            # başlamadıysa (ilk kelimeler isme uygun değilse), devam et
+            # başlamadıysa devam (örn. araya giren gereksiz tokenları atla)
             continue
+
+        # Sonda bağlaç kaldıysa at
+        while name_tokens and name_tokens[-1].lower() in connectors:
+            name_tokens.pop()
 
         name = " ".join(name_tokens)
         name = OutlookGraphAppOnly._clean_name(name)
 
-        # Fallback: "ADI SOYADI : <Ad Soyad>"
+        # 3) Fallback: "ADI SOYADI : <Ad Soyad>"
         if not name:
             m2 = re.search(
                 r"ADI\s*SOYADI\s*[:\-]?\s*(?P<name>(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+){1,5}))",
-                flags=re.IGNORECASE
+                text, flags=re.IGNORECASE
             )
             if m2:
                 name = OutlookGraphAppOnly._clean_name(m2.group("name"))
 
+        # 4) Minimum 2 token şartı (Ad + Soyad); değilse boş döndür
+        if len(name.split()) < 2:
+            return ""
         return name
 
-    # === TERMINATION Regex ===
+    # === TERMINATION Regex (daha önceden çalışan) ===
     @staticmethod
     def _extract_name_termination(text):
         pat = re.compile(
@@ -183,7 +176,7 @@ class OutlookGraphAppOnly(AppBase):
                     self.logger.info(f"[NEW_HIRE] matched name: {name}")
             else:
                 if self.logger:
-                    prev = (it.get("bodyPreview") or "")[:100]
+                    prev = (it.get("bodyPreview") or "")[:120]
                     self.logger.info(f"[NEW_HIRE] no match. preview={prev}")
         return {"success": True, "names": names}
 
