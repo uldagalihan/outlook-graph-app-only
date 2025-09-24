@@ -77,7 +77,11 @@ class OutlookGraphAppOnly(AppBase):
             ub = item.get("uniqueBody") or {}
             b  = item.get("body") or {}
             body = (ub.get("content") or b.get("content") or item.get("bodyPreview") or "")
-        return re.sub(r"\s+", " ", body).strip()
+        # Yeni satırları koru, boşlukları sadeleştir (ama \n dursun)
+        body = body.replace("\r\n", "\n").replace("\r", "\n")
+        body = re.sub(r"[ \t]+", " ", body)
+        body = re.sub(r"\n{2,}", "\n", body)
+        return body.strip()
 
     # === İsim normalize ===
     @staticmethod
@@ -88,36 +92,39 @@ class OutlookGraphAppOnly(AppBase):
         return name.strip(" \t\r\n-–—.")
 
     # === NEW HIRE Regex ===
-    # Senaryon: "… CEP TELEFONU … SİCİL NO 1234 Alihan Uludağ …"
-    # Önce SİCİL NO <numara> sonra 2-4 kelimelik İsim Soyisim (Türkçe harfler destekli)
+    # Tablo düz metne çevrilince: [BAŞLIKLAR] ... CEP TELEFONU   [DEĞERLER] SİCİL NO <numara> <Ad Soyad> ...
+    # Strateji: "CEP TELEFONU" başlığından sonra gelen İLK sayı = sicil, hemen ardından 2-4 kelimelik "Ad Soyad".
     @staticmethod
     def _extract_name_new_hire(text):
-        # 1) Primary: "sicil no <numara> <Ad Soyad ...>"
+        # Türkçe harfleri destekleyen "Ad Soyad" bloğu (2-4 kelime)
+        NAME_BLOCK = r"(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+){1,3})"
+
+        # 1) Birincil desen: CEP TELEFONU ... <sicil_no> <Ad Soyad>
         pat1 = re.compile(
-            r"sicil\s*no\s*[:\-]?\s*\d+\s+(?P<name>(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+){1,3}))",
-            flags=re.IGNORECASE
+            rf"CEP\s*TELEFONU\b.*?\b\d{{3,}}\s+(?P<name>{NAME_BLOCK})",
+            flags=re.IGNORECASE | re.DOTALL
         )
         m = pat1.search(text)
         if m:
-            return OutlookGraphAppOnly._clean_name(m.group('name'))
+            return OutlookGraphAppOnly._clean_name(m.group("name"))
 
-        # 2) Fallback: "ADI SOYADI : <Ad Soyad>"
+        # 2) Yedek: SİCİL NO ... <sicil_no> <Ad Soyad>
         pat2 = re.compile(
-            r"adi\s*soyadi\s*[:\-]?\s*(?P<name>(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+){1,3}))",
-            flags=re.IGNORECASE
+            rf"SİCİL\s*NO\b.*?\b\d{{3,}}\s+(?P<name>{NAME_BLOCK})",
+            flags=re.IGNORECASE | re.DOTALL
         )
         m = pat2.search(text)
         if m:
-            return OutlookGraphAppOnly._clean_name(m.group('name'))
+            return OutlookGraphAppOnly._clean_name(m.group("name"))
 
-        # 3) Fallback: "CEP TELEFONU ... <uzun numara> <Ad Soyad>"
+        # 3) Yedek: ADI SOYADI : <Ad Soyad>
         pat3 = re.compile(
-            r"cep\s*telefonu.*?\b\d{6,}\b\s+(?P<name>(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+){1,3}))",
+            rf"ADI\s*SOYADI\s*[:\-]?\s*(?P<name>{NAME_BLOCK})",
             flags=re.IGNORECASE
         )
         m = pat3.search(text)
         if m:
-            return OutlookGraphAppOnly._clean_name(m.group('name'))
+            return OutlookGraphAppOnly._clean_name(m.group("name"))
 
         return ""
 
@@ -145,7 +152,8 @@ class OutlookGraphAppOnly(AppBase):
                     self.logger.info(f"[NEW_HIRE] matched name: {name}")
             else:
                 if self.logger:
-                    self.logger.info(f"[NEW_HIRE] no match. body_preview={it.get('bodyPreview','')[:80]}")
+                    prev = (it.get("bodyPreview") or "")[:80]
+                    self.logger.info(f"[NEW_HIRE] no match. preview={prev}")
         return {"success": True, "names": names}
 
     # === ACTION 2: Termination -> İSİM LİSTESİ ===
