@@ -10,7 +10,7 @@ from walkoff_app_sdk.app_base import AppBase
 GRAPH = "https://graph.microsoft.com/v1.0"
 
 class OutlookGraphAppOnly(AppBase):
-    __version__ = "1.0.2"
+    __version__ = "1.0.3"
     app_name = "Outlook Graph AppOnly"
 
     def __init__(self, redis=None, logger=None, **kwargs):
@@ -257,7 +257,7 @@ class OutlookGraphAppOnly(AppBase):
     def _to_iso_dt(dt: _dt.datetime) -> str:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=_dt.timezone.utc)
-        return dt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return dt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%SZ")
 
     @staticmethod
     def _midnight_utc_after_days(d: _dt.date, days: int) -> str:
@@ -285,8 +285,13 @@ class OutlookGraphAppOnly(AppBase):
                     self.logger.info(f"[NEW_HIRE] no match. preview={prev}")
         return {"success": True, "names": names}
 
-    # === ACTION 2: Termination -> Detaylı JSON + geri uyumluluk ===
-    def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
+    # === ACTION 2: Termination -> Detaylı/Compact JSON ===
+    def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None, compact=True):
+        """
+        compact=True -> items yalnızca:
+            name, mail_received_at, termination_date, activate_at
+        compact=False -> eski detaylı şema (subject, message_id, preview dahil)
+        """
         subject = "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi"
         items = self._fetch_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
         names = []
@@ -302,18 +307,31 @@ class OutlookGraphAppOnly(AppBase):
             received_iso = it.get("receivedDateTime", "") or ""
             activate_at = self._midnight_utc_after_days(term_date, 3) if term_date else ""
 
-            out_items.append({
-                "name": name or "",
-                "mail_received_at": received_iso,
-                "termination_date": self._to_iso_date(term_date) if term_date else "",
-                "activate_at": activate_at,
-                "subject": it.get("subject") or "",
-                "message_id": it.get("id") or "",
-                "preview": (it.get("bodyPreview") or "")[:300]
-            })
+            if compact:
+                out = {
+                    "name": name or "",
+                    "mail_received_at": received_iso,
+                    "termination_date": self._to_iso_date(term_date) if term_date else "",
+                    "activate_at": activate_at,
+                }
+            else:
+                out = {
+                    "name": name or "",
+                    "mail_received_at": received_iso,
+                    "termination_date": self._to_iso_date(term_date) if term_date else "",
+                    "activate_at": activate_at,
+                    "subject": it.get("subject") or "",
+                    "message_id": it.get("id") or "",
+                    "preview": (it.get("bodyPreview") or "")[:300]
+                }
+
+            out_items.append(out)
 
             if self.logger:
-                self.logger.info(f"[TERMINATION] name='{name}' term_date='{term_date}' activate_at='{activate_at}'")
+                # kısa ve UTF-8 güvenli log
+                self.logger.info(
+                    f"[TERMINATION] name='{name}' term_date='{term_date}' activate_at='{activate_at}' compact={compact}"
+                )
 
         return {"success": True, "items": out_items, "names": names}
 
