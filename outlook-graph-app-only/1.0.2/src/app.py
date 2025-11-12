@@ -153,14 +153,68 @@ class OutlookGraphAppOnly(AppBase):
         return name
 
     # === TERMINATION Regex (daha önceden çalışan) ===
+        # === TERMINATION Regex (iki formatı da doğru parse eder) ===
     @staticmethod
     def _extract_name_termination(text):
-        pat = re.compile(
-            r"sicili\s+ile\s+çalışan\s+(?P<name>.+?)\s+için\b",
-            flags=re.IGNORECASE | re.DOTALL
+        """
+        İki tip metni destekler:
+        1) "... sicili ile çalışan <Ad Soyad> isimli çalışan için ..."
+        2) "<Ad Soyad> için ..."
+
+        - 'isimli çalışan' ifadesini adı içine KATMAYACAK.
+        - Yalnızca isim görünümlü token dizilerini (2–6 parça) yakalar.
+        - TR karakterler ve ALL-CAPS parçalar (örn. 'İSMALOĞLU') desteklenir.
+        """
+        # 0) Normalize satırsonları ve boşluklar
+        txt = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        txt = re.sub(r"[ \t]+", " ", txt)
+        txt = re.sub(r"\n+", " ", txt).strip()
+
+        # 1) İsim token paterni (TitleCase ya da ALL-CAPS parçalar, 2-6 kelime)
+        name_token = r"(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+|[A-ZÇĞİÖŞÜ]{2,})"
+        name_pattern = rf"(?P<name>{name_token}(?:\s+{name_token}){{1,5}})"
+
+        # 2) Özel format: "sicili ile çalışan <Ad Soyad> isimli çalışan için"
+        pat_with_label = re.compile(
+            rf"sicil\w*\s+ile\s+çalışan\s+{name_pattern}\s+isimli\s+çalışan\s+için\b",
+            flags=re.IGNORECASE
         )
-        m = pat.search(text)
-        return OutlookGraphAppOnly._clean_name(m.group("name")) if m else ""
+
+        # 3) Genel format: "<Ad Soyad> için"
+        #   - Bu patern tarih vb. öncesindeki en yaygın yapıyı yakalar.
+        pat_plain = re.compile(
+            rf"\b{name_pattern}\s+için\b",
+            flags=re.IGNORECASE
+        )
+
+        # 4) Alternatif: "sicili ile çalışan <Ad Soyad> için" (nadiren 'isimli çalışan' yok)
+        pat_without_label = re.compile(
+            rf"sicil\w*\s+ile\s+çalışan\s+{name_pattern}\s+için\b",
+            flags=re.IGNORECASE
+        )
+
+        for pat in (pat_with_label, pat_without_label, pat_plain):
+            m = pat.search(txt)
+            if m:
+                raw = m.group("name").strip()
+
+                # Post-process: sondaki istenmeyen takılar için ufak temizlik (ek güvenlik)
+                raw = re.sub(r"\s+isimli\s+çalışan\b.*$", "", raw, flags=re.IGNORECASE).strip()
+
+                # Bağlaçlar sonda kalmışsa at
+                connectors = {"de","da","van","von","bin","ibn","al","el","oğlu","oglu","del","di","di’"}
+                toks = raw.split()
+                while toks and toks[-1].lower() in connectors:
+                    toks.pop()
+                name = " ".join(toks)
+
+                # Minimum 2 token şartı
+                if len(name.split()) >= 2:
+                    return OutlookGraphAppOnly._clean_name(name)
+
+        # Bulunamazsa boş dön
+        return ""
+
 
     # === ACTION 1: New Hire -> İSİM LİSTESİ ===
     def list_new_hire_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
