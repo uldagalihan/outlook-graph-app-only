@@ -54,7 +54,7 @@ class OutlookGraphAppOnly(AppBase):
         # $orderby alanı $filter içinde de (ve önce) geçmeli kuralına uyar
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
         params = {
-            "$select": "sender,subject,receivedDateTime",
+            "$select": "id,sender,subject,receivedDateTime,body,uniqueBody,bodyPreview",
             "$filter": filter_expr,
             "$orderby": "receivedDateTime desc",
         }
@@ -67,6 +67,18 @@ class OutlookGraphAppOnly(AppBase):
         data = self._get(url, tok, params=params, prefer_text_body=True)
         return data.get("value", [])
 
+    # === Body metnini al (uniqueBody varsa onu tercih et) ===
+    @staticmethod
+    def _get_body_text(item):
+        body = ""
+        if isinstance(item, dict):
+            ub = item.get("uniqueBody") or {}
+            b  = item.get("body") or {}
+            body = (ub.get("content") or b.get("content") or item.get("bodyPreview") or "")
+        body = body.replace("\r\n", "\n").replace("\r", "\n")
+        body = re.sub(r"[ \t]+", " ", body)
+        body = re.sub(r"\n{2,}", "\n", body)
+        return body.strip()
 
     # === İsim normalize ===
     @staticmethod
@@ -269,6 +281,7 @@ class OutlookGraphAppOnly(AppBase):
                     self.logger.info(f"[NEW_HIRE] matched name: {name}")
             else:
                 if self.logger:
+                    prev = (it.get("bodyPreview") or "")[:120]
                     self.logger.info(f"[NEW_HIRE] no match. preview={prev}")
         return {"success": True, "names": names}
 
@@ -293,7 +306,7 @@ class OutlookGraphAppOnly(AppBase):
                 "name": name or "",
                 "mail_received_at": received_iso,
                 "termination_date": self._to_iso_date(term_date) if term_date else "",
-                "activate_at": activate_at,
+                "activate_at": activate_at
             })
 
             if self.logger:
@@ -304,4 +317,3 @@ class OutlookGraphAppOnly(AppBase):
 
 if __name__ == "__main__":
     OutlookGraphAppOnly.run()
-
