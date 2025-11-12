@@ -10,7 +10,7 @@ from walkoff_app_sdk.app_base import AppBase
 GRAPH = "https://graph.microsoft.com/v1.0"
 
 class OutlookGraphAppOnly(AppBase):
-    __version__ = "1.0.2"
+    __version__ = "1.1.0"
     app_name = "Outlook Graph AppOnly"
 
     def __init__(self, redis=None, logger=None, **kwargs):
@@ -51,7 +51,7 @@ class OutlookGraphAppOnly(AppBase):
         tok = self._token(tenant_id, client_id, client_secret)
         url = f"{GRAPH}/users/{mailbox}/messages"
         safe_subject = subject.replace("'", "''")
-        # $orderby alanı $filter içinde de (ve önce) geçmeli kuralına uyar
+        # $orderby kuralı ($filter içinde de alan geçmeli)
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
         params = {
             "$select": "id,sender,subject,receivedDateTime,body,uniqueBody,bodyPreview",
@@ -91,57 +91,42 @@ class OutlookGraphAppOnly(AppBase):
     # === Yardımcılar: token sınıfları ===
     @staticmethod
     def _is_all_caps_word(tok: str) -> bool:
-        # Türkçe uyumlu ALL-CAPS: sadece harflerden oluşsun ve en az 2 harf olsun
         letters = re.sub(r"[^A-Za-zÇĞİÖŞÜçğıöşü]", "", tok)
         return len(letters) >= 2 and letters == letters.upper()
 
     @staticmethod
     def _is_title_like(tok: str) -> bool:
-        # TitleCase/MixedCase isim: İlk harf büyük, devamı küçük/karmışık (oğlu- gibi tire destekli)
         return bool(re.match(r"^[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+$", tok))
 
-    # === NEW HIRE: Ad Soyad = (sicil no'dan sonra) ilk ALL-CAPS gelene kadarki 2–6 token ===
+    # === NEW HIRE: Ad Soyad yakalama ===
     @staticmethod
     def _extract_name_new_hire(text):
-        # 1) CEP TELEFONU ... <sicil> sonrası metni al; yoksa SİCİL NO ile dene
         m = re.search(r"CEP\s*TELEFONU\b.*?\b(\d{3,})\b(?P<rest>.*)", text, flags=re.IGNORECASE | re.DOTALL)
         if not m:
             m = re.search(r"S[İI]C[İI]L\s*NO\b.*?\b(\d{3,})\b(?P<rest>.*)", text, flags=re.IGNORECASE | re.DOTALL)
         rest = m.group("rest") if m else text
 
-        # 2) Tokenize (TR harfler dahil)
         tokens = re.findall(r"[A-Za-zÇĞİÖŞÜçğıöşü'’\-]+", rest)
-
         connectors = {"de","da","van","von","bin","ibn","al","el","oğlu","oglu","del","di"}
         name_tokens = []
 
         for tok in tokens:
             low = tok.lower()
-
-            # POZİSYON kolonu ALL-CAPS olduğundan: ilk ALL-CAPS kelimede kes
             if OutlookGraphAppOnly._is_all_caps_word(tok):
                 break
-
-            # İsim kuralları: TitleCase veya bağlaç
             if OutlookGraphAppOnly._is_title_like(tok) or low in connectors:
                 name_tokens.append(tok)
-                if len(name_tokens) >= 6:  # çok uzamasın
+                if len(name_tokens) >= 6:
                     break
                 continue
-
-            # İsim başladıysa ve bu token isim formatına uymuyorsa kes
             if name_tokens:
                 break
-            continue
 
-        # Sonda bağlaç kaldıysa at
         while name_tokens and name_tokens[-1].lower() in connectors:
             name_tokens.pop()
 
-        name = " ".join(name_tokens)
-        name = OutlookGraphAppOnly._clean_name(name)
+        name = OutlookGraphAppOnly._clean_name(" ".join(name_tokens))
 
-        # 3) Fallback: "ADI SOYADI : <Ad Soyad>"
         if not name:
             m2 = re.search(
                 r"ADI\s*SOYADI\s*[:\-]?\s*(?P<name>(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+){1,5}))",
@@ -150,52 +135,41 @@ class OutlookGraphAppOnly(AppBase):
             if m2:
                 name = OutlookGraphAppOnly._clean_name(m2.group("name"))
 
-        # 4) Minimum 2 token şartı (Ad + Soyad)
         if len(name.split()) < 2:
             return ""
         return name
 
-    # === Yardımcı: tarih yakala (TR formatlarına toleranslı) ===
+    # === Yardımcı: tarih yakala ===
     @staticmethod
     def _extract_first_date(text):
-        """
-        Metinden ilk 'olası tarih'i döndürür.
-        Öncelik: 'tarihi itibari ile' civarındaki DD.MM.YYYY / DD/MM/YYYY / YYYY-MM-DD.
-        Bulunamazsa ilk tarih benzeri ifadeyi arar.
-        Return: datetime.date veya None
-        """
         if not text:
             return None
         t = text.replace("\r\n", "\n").replace("\r", "\n")
         t = re.sub(r"\s+", " ", t)
 
-        # 1) 'tarihi itibari ile' civarında 0-30 karakter içinde bir tarih ara
         ctx_pat = re.compile(r"tarihi\s+itibari\s+ile.{0,30}", re.IGNORECASE)
         date_pats = [
-            r"(?P<d>\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b)",  # 17.10.2025, 17/10/25
-            r"(?P<d>\b\d{4}-\d{1,2}-\d{1,2}\b)",          # 2025-10-17
+            r"(?P<d>\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b)",
+            r"(?P<d>\b\d{4}-\d{1,2}-\d{1,2}\b)",
         ]
-        # önce bağlam içinde tara
+
         mctx = ctx_pat.search(t)
         search_ranges = []
         if mctx:
             s, e = mctx.start(), mctx.end()
             search_ranges.append(t[max(0, s-40): min(len(t), e+40)])
-        # sonra tüm metin fallback
         search_ranges.append(t)
 
         def _parse_candidate(s):
-            # DD.MM.YYYY veya DD/MM/YYYY
             m = re.search(r"\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b", s)
             if m:
                 d, M, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                if y < 100:  # 25 -> 2025 varsay
+                if y < 100:
                     y += 2000
                 try:
                     return _dt.date(y, M, d)
                 except ValueError:
                     pass
-            # YYYY-MM-DD
             m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
             if m:
                 y, M, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -214,13 +188,9 @@ class OutlookGraphAppOnly(AppBase):
                         return got
         return None
 
-    # === TERMINATION Regex (iki formatı da doğru parse eder) ===
+    # === TERMINATION Regex ===
     @staticmethod
     def _extract_name_termination(text):
-        """
-        1) '... sicili ile çalışan <Ad Soyad> isimli çalışan için ...'
-        2) '<Ad Soyad> için ...'
-        """
         txt = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         txt = re.sub(r"[ \t]+", " ", txt)
         txt = re.sub(r"\n+", " ", txt).strip()
@@ -267,6 +237,39 @@ class OutlookGraphAppOnly(AppBase):
         target = target.replace(hour=0, minute=0, second=0, microsecond=0)
         return OutlookGraphAppOnly._to_iso_dt(target)
 
+    # === Zaman yardımcıları ===
+    @staticmethod
+    def _now_utc():
+        return _dt.datetime.now(_dt.timezone.utc)
+
+    @staticmethod
+    def _parse_iso_utc(s: str):
+        try:
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            return _dt.datetime.fromisoformat(s)
+        except Exception:
+            return None
+
+    @classmethod
+    def _filter_ready(cls, items):
+        """
+        activate_at yoksa: hemen hazır sayar.
+        activate_at varsa: activate_at <= now (UTC) olanları bırakır.
+        """
+        out = []
+        now = cls._now_utc()
+        for it in (items or []):
+            if not isinstance(it, dict):
+                continue
+            act = (it.get("activate_at") or "").strip()
+            if not act:
+                out.append(it); continue
+            dt = cls._parse_iso_utc(act)
+            if not dt or dt <= now:
+                out.append(it)
+        return out
+
     # === ACTION 1: New Hire -> İSİM LİSTESİ ===
     def list_new_hire_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
         subject = "[Kurum Dışı] Şirkete Yeni Katılım - New Comer"
@@ -285,34 +288,55 @@ class OutlookGraphAppOnly(AppBase):
                     self.logger.info(f"[NEW_HIRE] no match. preview={prev}")
         return {"success": True, "names": names}
 
-    # === ACTION 2: Termination -> Detaylı JSON + geri uyumluluk ===
-    def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None):
+    # === ACTION 2: Termination -> Detaylı JSON (+ activate filtre opsiyonu) ===
+    def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None, only_ready=True):
         subject = "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi"
         items = self._fetch_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
-        names = []
         out_items = []
+        names = []
+
         for it in items:
             body = self._get_body_text(it)
             name = self._extract_name_termination(body)
             term_date = self._extract_first_date(body)  # datetime.date veya None
 
-            if name:
-                names.append(name)
-
             received_iso = it.get("receivedDateTime", "") or ""
             activate_at = self._midnight_utc_after_days(term_date, 3) if term_date else ""
 
-            out_items.append({
+            rec = {
                 "name": name or "",
                 "mail_received_at": received_iso,
                 "termination_date": self._to_iso_date(term_date) if term_date else "",
                 "activate_at": activate_at
-            })
+            }
+            out_items.append(rec)
 
-            if self.logger:
-                self.logger.info(f"[TERMINATION] name='{name}' term_date='{term_date}' activate_at='{activate_at}'")
+        # Activate filtresi
+        if only_ready:
+            ready = self._filter_ready(out_items)
+        else:
+            ready = out_items
 
-        return {"success": True, "items": out_items, "names": names}
+        # names: boş olmayan + uniq
+        seen = set()
+        for r in ready:
+            nm = (r.get("name") or "").strip()
+            if nm and nm not in seen:
+                seen.add(nm)
+                names.append(nm)
+
+        if self.logger:
+            self.logger.info(f"[TERMINATION] total={len(out_items)} ready={len(ready)} names={len(names)}")
+
+        return {"success": True, "items": ready, "names": names}
+
+    # === ACTION 3: Sadece 'hazır' isim listesi (QRadar'a direkt ver) ===
+    def list_ready_termination_names(self, tenant_id, client_id, client_secret, mailbox, top=None):
+        res = self.list_termination_messages(
+            tenant_id, client_id, client_secret, mailbox, top=top, only_ready=True
+        )
+        # QRadar app'in 'names' bekleyen action'ına doğrudan uygun
+        return {"success": res.get("success", True), "names": res.get("names", [])}
 
 
 if __name__ == "__main__":
