@@ -1,4 +1,5 @@
 ﻿import json
+import datetime as _dt
 import re
 import requests
 from walkoff_app_sdk.app_base import AppBase
@@ -151,69 +152,119 @@ class OutlookGraphAppOnly(AppBase):
         if len(name.split()) < 2:
             return ""
         return name
+        
+# === Yardımcı: tarih yakala (TR formatlarına toleranslı) ===
+@staticmethod
+def _extract_first_date(text):
+    """
+    Metinden ilk 'olası tarih'i döndürür.
+    Öncelik: 'tarihi itibari ile' civarındaki DD.MM.YYYY / DD/MM/YYYY / YYYY-MM-DD.
+    Bulunamazsa ilk tarih benzeri ifadeyi arar.
+    Return: datetime.date veya None
+    """
+    if not text:
+        return None
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"\s+", " ", t)
 
-    # === TERMINATION Regex (daha önceden çalışan) ===
-        # === TERMINATION Regex (iki formatı da doğru parse eder) ===
-    @staticmethod
-    def _extract_name_termination(text):
-        """
-        İki tip metni destekler:
-        1) "... sicili ile çalışan <Ad Soyad> isimli çalışan için ..."
-        2) "<Ad Soyad> için ..."
+    # 1) 'tarihi itibari ile' civarında 0-30 karakter içinde bir tarih ara
+    ctx_pat = re.compile(r"tarihi\s+itibari\s+ile.{0,30}", re.IGNORECASE)
+    date_pats = [
+        r"(?P<d>\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b)",  # 17.10.2025, 17/10/25
+        r"(?P<d>\b\d{4}-\d{1,2}-\d{1,2}\b)",          # 2025-10-17
+    ]
+    # önce bağlam içinde tara
+    mctx = ctx_pat.search(t)
+    search_ranges = []
+    if mctx:
+        s, e = mctx.start(), mctx.end()
+        search_ranges.append(t[max(0, s-40): min(len(t), e+40)])
+    # sonra tüm metin fallback
+    search_ranges.append(t)
 
-        - 'isimli çalışan' ifadesini adı içine KATMAYACAK.
-        - Yalnızca isim görünümlü token dizilerini (2–6 parça) yakalar.
-        - TR karakterler ve ALL-CAPS parçalar (örn. 'İSMALOĞLU') desteklenir.
-        """
-        # 0) Normalize satırsonları ve boşluklar
-        txt = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-        txt = re.sub(r"[ \t]+", " ", txt)
-        txt = re.sub(r"\n+", " ", txt).strip()
+    def _parse_candidate(s):
+        # DD.MM.YYYY veya DD/MM/YYYY
+        m = re.search(r"\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b", s)
+        if m:
+            d, M, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if y < 100:  # 25 -> 2025 varsay
+                y += 2000
+            try:
+                return _dt.date(y, M, d)
+            except ValueError:
+                pass
+        # YYYY-MM-DD
+        m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
+        if m:
+            y, M, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            try:
+                return _dt.date(y, M, d)
+            except ValueError:
+                pass
+        return None
 
-        # 1) İsim token paterni (TitleCase ya da ALL-CAPS parçalar, 2-6 kelime)
-        name_token = r"(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+|[A-ZÇĞİÖŞÜ]{2,})"
-        name_pattern = rf"(?P<name>{name_token}(?:\s+{name_token}){{1,5}})"
-
-        # 2) Özel format: "sicili ile çalışan <Ad Soyad> isimli çalışan için"
-        pat_with_label = re.compile(
-            rf"sicil\w*\s+ile\s+çalışan\s+{name_pattern}\s+isimli\s+çalışan\s+için\b",
-            flags=re.IGNORECASE
-        )
-
-        # 3) Genel format: "<Ad Soyad> için"
-        #   - Bu patern tarih vb. öncesindeki en yaygın yapıyı yakalar.
-        pat_plain = re.compile(
-            rf"\b{name_pattern}\s+için\b",
-            flags=re.IGNORECASE
-        )
-
-        # 4) Alternatif: "sicili ile çalışan <Ad Soyad> için" (nadiren 'isimli çalışan' yok)
-        pat_without_label = re.compile(
-            rf"sicil\w*\s+ile\s+çalışan\s+{name_pattern}\s+için\b",
-            flags=re.IGNORECASE
-        )
-
-        for pat in (pat_with_label, pat_without_label, pat_plain):
-            m = pat.search(txt)
+    for seg in search_ranges:
+        for p in date_pats:
+            m = re.search(p, seg)
             if m:
-                raw = m.group("name").strip()
+                got = _parse_candidate(m.group("d"))
+                if got:
+                    return got
+    return None
 
-                # Post-process: sondaki istenmeyen takılar için ufak temizlik (ek güvenlik)
-                raw = re.sub(r"\s+isimli\s+çalışan\b.*$", "", raw, flags=re.IGNORECASE).strip()
+ # === TERMINATION Regex (iki formatı da doğru parse eder) ===
+@staticmethod
+def _extract_name_termination(text):
+    """
+    1) '... sicili ile çalışan <Ad Soyad> isimli çalışan için ...'
+    2) '<Ad Soyad> için ...'
+    """
+    txt = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    txt = re.sub(r"[ \t]+", " ", txt)
+    txt = re.sub(r"\n+", " ", txt).strip()
+    name_token = r"(?:[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'’\-]+|[A-ZÇĞİÖŞÜ]{2,})"
+    name_pattern = rf"(?P<name>{name_token}(?:\s+{name_token}){{1,5}})"
+    pat_with_label = re.compile(
+        rf"sicil\w*\s+ile\s+çalışan\s+{name_pattern}\s+isimli\s+çalışan\s+için\b",
+        flags=re.IGNORECASE
+    )
+    pat_plain = re.compile(rf"\b{name_pattern}\s+için\b", flags=re.IGNORECASE)
+    pat_without_label = re.compile(
+        rf"sicil\w*\s+ile\s+çalışan\s+{name_pattern}\s+için\b", flags=re.IGNORECASE
+    )
+    for pat in (pat_with_label, pat_without_label, pat_plain):
+        m = pat.search(txt)
+        if m:
+            raw = m.group("name").strip()
+            raw = re.sub(r"\s+isimli\s+çalışan\b.*$", "", raw, flags=re.IGNORECASE).strip()
+            connectors = {"de","da","van","von","bin","ibn","al","el","oğlu","oglu","del","di","di’"}
+            toks = raw.split()
+            while toks and toks[-1].lower() in connectors:
+                toks.pop()
+            name = " ".join(toks)
+            if len(name.split()) >= 2:
+                return OutlookGraphAppOnly._clean_name(name)
+    return ""
 
-                # Bağlaçlar sonda kalmışsa at
-                connectors = {"de","da","van","von","bin","ibn","al","el","oğlu","oglu","del","di","di’"}
-                toks = raw.split()
-                while toks and toks[-1].lower() in connectors:
-                    toks.pop()
-                name = " ".join(toks)
+# === ISO yardımcıları ===
+@staticmethod
+def _to_iso_date(d: _dt.date) -> str:
+    return d.isoformat() if d else ""
 
-                # Minimum 2 token şartı
-                if len(name.split()) >= 2:
-                    return OutlookGraphAppOnly._clean_name(name)
+@staticmethod
+def _to_iso_dt(dt: _dt.datetime) -> str:
+    # UTC 'Z'
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_dt.timezone.utc)
+    return dt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Bulunamazsa boş dön
+@staticmethod
+def _midnight_utc_after_days(d: _dt.date, days: int) -> str:
+    if not d:
         return ""
+    target = _dt.datetime(d.year, d.month, d.day, tzinfo=_dt.timezone.utc) + _dt.timedelta(days=days)
+    target = target.replace(hour=0, minute=0, second=0, microsecond=0)
+    return OutlookGraphAppOnly._to_iso_dt(target)
 
 
     # === ACTION 1: New Hire -> İSİM LİSTESİ ===
