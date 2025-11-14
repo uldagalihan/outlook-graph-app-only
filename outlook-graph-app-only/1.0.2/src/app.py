@@ -4,13 +4,71 @@
 import json
 import datetime as _dt
 import re
+import unicodedata
 import requests
 from walkoff_app_sdk.app_base import AppBase
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 
+# ==== Username normalizasyonu için TR map ====
+_TR_MAP = str.maketrans({
+    "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    "Ç": "c", "Ğ": "g", "İ": "i", "I": "i", "Ö": "o", "Ş": "s", "Ü": "u",
+})
+
+
+def _normalize_person_key(s: str) -> str:
+    """
+    Person parametresine yazılan değeri (full name veya username)
+    QRadar tarafındaki username formatına (alihan.uludag gibi) normalize eder.
+    """
+    s = (s or "").strip()
+    if not s:
+        return ""
+
+    # Eğer içinde boşluk varsa full name gibi düşün → ilk ve son token
+    if " " in s:
+        toks = re.findall(r"[A-Za-zÇĞİÖŞÜçğıöşü]+", s)
+        if len(toks) >= 2:
+            use = f"{toks[0]} {toks[-1]}"
+        else:
+            use = s
+    else:
+        # Zaten username gibi (alihan.uludag) kabul et
+        use = s
+
+    use = use.translate(_TR_MAP).lower()
+    try:
+        use = unicodedata.normalize("NFKD", use).encode("ascii", "ignore").decode("ascii")
+    except Exception:
+        pass
+
+    use = re.sub(r"[^a-z0-9 .]+", "", use)
+    use = re.sub(r"\s+", " ", use).strip()
+    use = use.replace(" ", ".")
+    use = re.sub(r"\.+", ".", use).strip(".")
+    return use
+
+
+def _parse_excluded_persons(persons_str: str):
+    """
+    Outlook action parametresinden gelen Person listesini set'e çevirir.
+    Ör: "alihan.uludag, emre.uludag" -> {"alihan.uludag", "emre.uludag"}
+    """
+    if not persons_str:
+        return set()
+
+    parts = re.split(r"[,\n;]+", persons_str)
+    out = set()
+    for p in parts:
+        key = _normalize_person_key(p)
+        if key:
+            out.add(key)
+    return out
+
+
 class OutlookGraphAppOnly(AppBase):
-    __version__ = "1.1.0"
+    __version__ = "1.1.1"   # versiyonu artırdım
     app_name = "Outlook Graph AppOnly"
 
     def __init__(self, redis=None, logger=None, **kwargs):
@@ -51,7 +109,7 @@ class OutlookGraphAppOnly(AppBase):
         tok = self._token(tenant_id, client_id, client_secret)
         url = f"{GRAPH}/users/{mailbox}/messages"
         safe_subject = subject.replace("'", "''")
-        # $orderby kuralı ($filter içinde de alan geçmeli)
+
         filter_expr = f"receivedDateTime ge 1900-01-01T00:00:00Z and subject eq '{safe_subject}'"
         params = {
             "$select": "id,sender,subject,receivedDateTime,body,uniqueBody,bodyPreview",
@@ -64,6 +122,7 @@ class OutlookGraphAppOnly(AppBase):
             except Exception:
                 t = 10
             params["$top"] = t
+
         data = self._get(url, tok, params=params, prefer_text_body=True)
         return data.get("value", [])
 
@@ -73,7 +132,7 @@ class OutlookGraphAppOnly(AppBase):
         body = ""
         if isinstance(item, dict):
             ub = item.get("uniqueBody") or {}
-            b  = item.get("body") or {}
+            b = item.get("body") or {}
             body = (ub.get("content") or b.get("content") or item.get("bodyPreview") or "")
         body = body.replace("\r\n", "\n").replace("\r", "\n")
         body = re.sub(r"[ \t]+", " ", body)
@@ -160,8 +219,8 @@ class OutlookGraphAppOnly(AppBase):
             search_ranges.append(t[max(0, s-40): min(len(t), e+40)])
         search_ranges.append(t)
 
-        def _parse_candidate(s):
-            m = re.search(r"\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b", s)
+        def _parse_candidate(s2):
+            m = re.search(r"\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b", s2)
             if m:
                 d, M, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 if y < 100:
@@ -170,7 +229,7 @@ class OutlookGraphAppOnly(AppBase):
                     return _dt.date(y, M, d)
                 except ValueError:
                     pass
-            m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
+            m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s2)
             if m:
                 y, M, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 try:
@@ -288,17 +347,41 @@ class OutlookGraphAppOnly(AppBase):
                     self.logger.info(f"[NEW_HIRE] no match. preview={prev}")
         return {"success": True, "names": names}
 
-    # === ACTION 2: Termination -> Detaylı JSON (+ activate filtre opsiyonu) ===
-    def list_termination_messages(self, tenant_id, client_id, client_secret, mailbox, top=None, only_ready=True):
+    # === ACTION 2: Termination -> Detaylı JSON (+ activate filtre + exclude_persons) ===
+    def list_termination_messages(
+        self,
+        tenant_id,
+        client_id,
+        client_secret,
+        mailbox,
+        top=None,
+        only_ready=True,
+        exclude_persons=None   # <<< YENİ PARAM
+    ):
+        """
+        exclude_persons:
+          Örnek input: "alihan.uludag, emre.uludag"
+          Açıklama (Shuffle description): "İşe devam ettiği için mailden ismi çekilmeyecek kişileri buraya yazın."
+        """
         subject = "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi"
         items = self._fetch_by_exact_subject(tenant_id, client_id, client_secret, mailbox, subject, top)
         out_items = []
         names = []
 
+        excluded = _parse_excluded_persons(exclude_persons)
+
         for it in items:
             body = self._get_body_text(it)
             name = self._extract_name_termination(body)
             term_date = self._extract_first_date(body)  # datetime.date veya None
+
+            # Eğer isim var ve excluded listesindeyse, tamamen atla
+            if name:
+                uname = _normalize_person_key(name)
+                if uname and uname in excluded:
+                    if self.logger:
+                        self.logger.info(f"[TERMINATION] excluded person: name={name} uname={uname}")
+                    continue
 
             received_iso = it.get("receivedDateTime", "") or ""
             activate_at = self._midnight_utc_after_days(term_date, 3) if term_date else ""
@@ -331,11 +414,24 @@ class OutlookGraphAppOnly(AppBase):
         return {"success": True, "items": ready, "names": names}
 
     # === ACTION 3: Sadece 'hazır' isim listesi (QRadar'a direkt ver) ===
-    def list_ready_termination_names(self, tenant_id, client_id, client_secret, mailbox, top=None):
+    def list_ready_termination_names(
+        self,
+        tenant_id,
+        client_id,
+        client_secret,
+        mailbox,
+        top=None,
+        exclude_persons=None   # <<< aynı param buraya da
+    ):
         res = self.list_termination_messages(
-            tenant_id, client_id, client_secret, mailbox, top=top, only_ready=True
+            tenant_id,
+            client_id,
+            client_secret,
+            mailbox,
+            top=top,
+            only_ready=True,
+            exclude_persons=exclude_persons
         )
-        # QRadar app'in 'names' bekleyen action'ına doğrudan uygun
         return {"success": res.get("success", True), "names": res.get("names", [])}
 
 
