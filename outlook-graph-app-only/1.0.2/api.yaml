@@ -1,6 +1,6 @@
-﻿name: Outlook Graph AppOnly
+name: Outlook Graph AppOnly
 description: Microsoft Graph (Application credentials) - HR filtered messages (returns names)
-app_version: "1.0.2"
+app_version: "1.1.0"
 contact_info:
   name: "uldagalihan"
   url: "https://github.com/uldagalihan/outlook-graph-app-only"
@@ -41,7 +41,10 @@ actions:
 
   - name: list_termination_messages
     label: Extract names from Termination emails
-    description: Get messages where subject equals "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi" and return extracted full names from body
+    description: >
+      Get messages where subject equals "[Kurum Dışı] Çalışan İlişik Kesme Bildirimi"
+      and return extracted full names and metadata from body. Optionally exclude
+      persons who continue working.
     parameters:
       - name: tenant_id
         required: true
@@ -65,5 +68,61 @@ actions:
         description: "How many messages to inspect (page size 1-1000)"
         required: false
         schema: { type: integer }
+      - name: only_ready
+        description: "If true, only include records whose activate_at <= now (ready to be applied). Default: true"
+        required: false
+        schema:
+          type: boolean
+          default: true
+      - name: exclude_persons
+        label: Persons to exclude (still employed)
+        description: >
+          Comma/semicolon/newline-separated list of users who should NOT be taken
+          from termination mails (e.g. 'alihan.uludag, emre.uludag'). These users
+          will be ignored in the output.
+        required: false
+        schema:
+          type: string
     returns:
       schema: { type: object }
+
+  - name: list_ready_termination_names
+    label: Extract READY termination names (for QRadar)
+    description: >
+      Same as 'list_termination_messages' but returns only the names that are ready
+      (activate_at <= now) and not in the excluded Person list. Ideal for QRadar
+      Reference Set loader.
+    parameters:
+      - name: tenant_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_id
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: client_secret
+        required: true
+        variant: STATIC_VALUE
+        configuration: true
+        schema: { type: string }
+      - name: mailbox
+        required: true
+        schema: { type: string }
+      - name: top
+        description: "How many messages to inspect (page size 1-1000)"
+        required: false
+        schema: { type: integer }
+      - name: exclude_persons
+        label: Persons to exclude (still employed)
+        description: >
+          Comma/semicolon/newline-separated list of users who should NOT be taken
+          from termination mails (e.g. 'alihan.uludag, emre.uludag').
+        required: false
+        schema:
+          type: string
+    returns:
+      schema:
+        type: object
